@@ -19,7 +19,7 @@ Python SDK for the TROPIC01 secure element from [Tropic Square](https://tropicsq
 
 ```bash
 # Virtual environment preparation
-pip -m venv .venv
+python -m venv .venv
 source .venv/bin/activate
 
 # Basic installation
