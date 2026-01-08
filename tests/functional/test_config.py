@@ -4,7 +4,6 @@ Test R-Config and I-Config Read, Write, and Erase L3 commands.
 Mirrors:
     - libtropic-upstream/tests/functional/lt_test_rev_read_r_config.c
     - libtropic-upstream/tests/functional/lt_test_rev_write_r_config.c
-    - libtropic-upstream/tests/functional/lt_test_rev_erase_r_config.c
     - libtropic-upstream/tests/functional/lt_test_rev_read_i_config.c
     - libtropic-upstream/tests/functional/lt_test_ire_write_i_config.c
 
@@ -75,75 +74,84 @@ class TestRConfigRead:
         assert 0 <= config.debug <= 0xFFFFFFFF
         assert 0 <= config.uap_ping <= 0xFFFFFFFF
 
-
 @pytest.mark.hardware
 @pytest.mark.destructive
-class TestRConfigWrite:
+class TestRConfigReadWrite:
     """
     Tests for R_Config_Write command.
 
     Maps to: lt_test_rev_write_r_config()
     """
 
-    def test_write_read_r_config(self, device_with_session: Tropic01) -> None:
-        """Test writing and reading R-Config values."""
-        # Save original values
-        original_values: dict[ConfigAddress, int] = {}
-        addresses = [
-            ConfigAddress.UAP_PING,
-            ConfigAddress.UAP_RANDOM_VALUE_GET,
-        ]
-
-        for address in addresses:
-            original_values[address] = device_with_session.config.read_r(address)
+    def test_read_erase_write_r_config(self, device_with_session: Tropic01) -> None:
+        """
+        Test writing and reading R-Config values using a full Read-Modify-Write cycle.
+        
+        Sequence:
+        1. Read entire R-Config state (Backup).
+        2. Erase R-Config on device.
+        3. Verify all R-Config words are erased (0xFFFFFFFF).
+        4. Prepare modified state locally (Backup + Test Values).
+        5. Write full modified state.
+        6. Verify changes.
+        7. Restore original state 
+            7.1 - Erase
+            7.2 - Verify Erase
+            7.3 - Restore original values
+        """
+        
+        # 1. Read the entire R-Config to capture full device state
+        full_original_config: dict[ConfigAddress, int] = {}
+        for address in ConfigAddress:
+            full_original_config[address] = device_with_session.config.read_r(address)
 
         try:
-            # Write test values
-            test_values = {
+            # 2. Erase R-Config
+            device_with_session.config.erase_r()
+
+            # 3. Verify that the Erase was successful for ALL addresses
+            for address in ConfigAddress:
+                val = device_with_session.config.read_r(address)
+                assert val == 0xFFFFFFFF, (
+                    f"Post-Erase Check Failed at {address.name} (0x{address.value:04X}): "
+                    f"Expected 0xFFFFFFFF, got 0x{val:08X}"
+                )
+
+            # 4. Prepare the data structure: Original Data + Desired Changes
+            config_to_write = full_original_config.copy()
+            
+            test_updates = {
                 ConfigAddress.UAP_PING: 0xAAAAAAAA,
                 ConfigAddress.UAP_RANDOM_VALUE_GET: 0x55555555,
             }
+            config_to_write.update(test_updates)
 
-            for address, value in test_values.items():
+            # 5. Write the full modified set
+            for address, value in config_to_write.items():
                 device_with_session.config.write_r(address, value)
 
-            # Verify written values
-            for address, expected in test_values.items():
+            # 6. Verify data integrity of the changes
+            for address, expected in test_updates.items():
                 actual = device_with_session.config.read_r(address)
                 assert actual == expected, (
-                    f"Address {address}: Expected 0x{expected:08X}, got 0x{actual:08X}"
+                    f"Write Verify Failed at {address.name}: Expected 0x{expected:08X}, got 0x{actual:08X}"
                 )
 
         finally:
-            # Restore original values
-            for address, value in original_values.items():
+            # 7. Restore original state 
+            #    Erase, verify and write back the original configuration
+            # 7.1 - Erase
+            device_with_session.config.erase_r()
+            # 7.2 - Verify Erase
+            for address in ConfigAddress:
+                val = device_with_session.config.read_r(address)
+                assert val == 0xFFFFFFFF, (
+                    f"Post-Erase Check Failed at {address.name} (0x{address.value:04X}): "
+                    f"Expected 0xFFFFFFFF, got 0x{val:08X}"
+                )
+            # 7.3 - Restore original values
+            for address, value in full_original_config.items():
                 device_with_session.config.write_r(address, value)
-
-
-@pytest.mark.hardware
-@pytest.mark.destructive
-class TestRConfigErase:
-    """
-    Tests for R_Config_Erase command.
-
-    Maps to: lt_test_rev_erase_r_config()
-    """
-
-    def test_erase_r_config(self, device_with_session: Tropic01) -> None:
-        """
-        Test erasing all R-Config.
-
-        After erase, all R-Config values should return to defaults (0xFFFFFFFF).
-        """
-        # First, write some non-default values
-        device_with_session.config.write_r(ConfigAddress.UAP_PING, 0x12345678)
-
-        # Erase all R-Config
-        device_with_session.config.erase_r()
-
-        # Verify values are reset to defaults
-        value = device_with_session.config.read_r(ConfigAddress.UAP_PING)
-        assert value == 0xFFFFFFFF, f"Expected 0xFFFFFFFF after erase, got 0x{value:08X}"
 
 
 @pytest.mark.hardware
